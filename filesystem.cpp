@@ -1,5 +1,5 @@
 #include "filesystem.h"
-
+#include <assert.h>
 #include <stdbool.h>
 
 // Cria a estrutura BTree vazia
@@ -100,6 +100,218 @@ void btree_insert(BTree* tree, TreeNode* k) {
         }
     }
 }
+
+TreeNode* create_txt_file(const char* name, const char* content) {
+    // aloca e preenche o File
+    File* f = (File*)malloc(sizeof(File));
+    assert(f);
+    f->name = strdup(name);
+    f->size = strlen(content);
+    f->content = (char*)malloc(f->size + 1);
+    assert(f->content);
+    strcpy(f->content, content);
+
+    // aloca o TreeNode
+    TreeNode* node = (TreeNode*)malloc(sizeof(TreeNode));
+    assert(node);
+    node->name = strdup(name);
+    node->type = FILE_TYPE;
+    node->data.file = f;
+    return node;
+}
+
+// ==== 2) Cria um TreeNode do tipo diretório ====
+TreeNode* create_directory(const char* name) {
+    // aloca e preenche o Directory
+    Directory* d = (Directory*)malloc(sizeof(Directory));
+    assert(d);
+    d->tree = btree_create();
+
+    // aloca o TreeNode
+    TreeNode* node = (TreeNode*)malloc(sizeof(TreeNode));
+    assert(node);
+    node->name = strdup(name);
+    node->type = DIRECTORY_TYPE;
+    node->data.directory = d;
+    return node;
+}
+
+// ==== 3) Implementação de btree_delete (usando CLRS) ====
+
+// forward-declare dos helpers
+void btree_delete_node(BTreeNode* x, const char* k);
+TreeNode* btree_get_pred(BTreeNode* x, int idx);
+TreeNode* btree_get_succ(BTreeNode* x, int idx);
+void btree_fill(BTreeNode* x, int idx);
+void btree_borrow_from_prev(BTreeNode* x, int idx);
+void btree_borrow_from_next(BTreeNode* x, int idx);
+void btree_merge(BTreeNode* x, int idx);
+
+void btree_delete(BTree* tree, const char* k) {
+    if (!tree || !tree->root) return;
+    btree_delete_node(tree->root, k);
+
+    // Se raiz ficou sem chaves, ajusta ponteiro
+    if (tree->root->num_keys == 0) {
+        BTreeNode* old = tree->root;
+        if (old->leaf) {
+            free(old);
+            tree->root = NULL;
+        } else {
+            tree->root = old->children[0];
+            free(old);
+        }
+    }
+}
+
+void btree_delete_node(BTreeNode* x, const char* k) {
+    int idx = 0;
+    // localiza a posição de k
+    while (idx < x->num_keys && strcmp(x->keys[idx]->name, k) < 0) idx++;
+
+    // caso 1: chave está neste nó (x)
+    if (idx < x->num_keys && strcmp(x->keys[idx]->name, k) == 0) {
+        if (x->leaf) {
+            // remova de um nó-folha
+            for (int i = idx+1; i < x->num_keys; ++i)
+                x->keys[i-1] = x->keys[i];
+            x->num_keys--;
+        } else {
+            // nó interno: três subcasos
+            if (x->children[idx]->num_keys >= BTREE_ORDER) {
+                TreeNode* pred = btree_get_pred(x, idx);
+                free(x->keys[idx]);
+                x->keys[idx] = pred;
+                btree_delete_node(x->children[idx], pred->name);
+            }
+            else if (x->children[idx+1]->num_keys >= BTREE_ORDER) {
+                TreeNode* succ = btree_get_succ(x, idx);
+                free(x->keys[idx]);
+                x->keys[idx] = succ;
+                btree_delete_node(x->children[idx+1], succ->name);
+            }
+            else {
+                btree_merge(x, idx);
+                btree_delete_node(x->children[idx], k);
+            }
+        }
+    }
+    else {
+        // caso 2: chave não está neste nó
+        if (x->leaf) {
+            // não encontrada
+            return;
+        }
+        // determina se o filho idx precisa de ajuste antes de descer
+        bool flag = ( (idx == x->num_keys) );
+        if (x->children[idx]->num_keys < BTREE_ORDER)
+            btree_fill(x, idx);
+        if (flag && idx > x->num_keys)
+            btree_delete_node(x->children[idx-1], k);
+        else
+            btree_delete_node(x->children[idx], k);
+    }
+}
+
+TreeNode* btree_get_pred(BTreeNode* x, int idx) {
+    BTreeNode* cur = x->children[idx];
+    while (!cur->leaf) cur = cur->children[cur->num_keys];
+    return cur->keys[cur->num_keys-1];
+}
+
+TreeNode* btree_get_succ(BTreeNode* x, int idx) {
+    BTreeNode* cur = x->children[idx+1];
+    while (!cur->leaf) cur = cur->children[0];
+    return cur->keys[0];
+}
+
+void btree_fill(BTreeNode* x, int idx) {
+    if (idx > 0 && x->children[idx-1]->num_keys >= BTREE_ORDER)
+        btree_borrow_from_prev(x, idx);
+    else if (idx < x->num_keys && x->children[idx+1]->num_keys >= BTREE_ORDER)
+        btree_borrow_from_next(x, idx);
+    else {
+        if (idx < x->num_keys)
+            btree_merge(x, idx);
+        else
+            btree_merge(x, idx-1);
+    }
+}
+
+void btree_borrow_from_prev(BTreeNode* x, int idx) {
+    BTreeNode* child = x->children[idx];
+    BTreeNode* sib   = x->children[idx-1];
+
+    // desloca as chaves de child para a direita
+    for (int i = child->num_keys-1; i >= 0; --i)
+        child->keys[i+1] = child->keys[i];
+    if (!child->leaf) {
+        for (int i = child->num_keys; i >= 0; --i)
+            child->children[i+1] = child->children[i];
+    }
+
+    // move chave do pai para child
+    child->keys[0] = x->keys[idx-1];
+    if (!x->leaf)
+        child->children[0] = sib->children[sib->num_keys];
+
+    // move chave de sib para o pai
+    x->keys[idx-1] = sib->keys[sib->num_keys-1];
+
+    child->num_keys += 1;
+    sib->num_keys -= 1;
+}
+
+void btree_borrow_from_next(BTreeNode* x, int idx) {
+    BTreeNode* child = x->children[idx];
+    BTreeNode* sib   = x->children[idx+1];
+
+    // chave do pai vai para o fim de child
+    child->keys[child->num_keys] = x->keys[idx];
+    if (!child->leaf)
+        child->children[child->num_keys+1] = sib->children[0];
+
+    // primeira chave de sib vai para o pai
+    x->keys[idx] = sib->keys[0];
+
+    // desloca em sib
+    for (int i = 1; i < sib->num_keys; ++i)
+        sib->keys[i-1] = sib->keys[i];
+    if (!sib->leaf) {
+        for (int i = 1; i <= sib->num_keys; ++i)
+            sib->children[i-1] = sib->children[i];
+    }
+    child->num_keys += 1;
+    sib->num_keys -= 1;
+}
+
+void btree_merge(BTreeNode* x, int idx) {
+    BTreeNode* child = x->children[idx];
+    BTreeNode* sib   = x->children[idx+1];
+
+    // puxa chave do pai para child
+    child->keys[BTREE_ORDER-1] = x->keys[idx];
+
+    // copia chaves de sib para child
+    for (int i = 0; i < sib->num_keys; ++i)
+        child->keys[i+BTREE_ORDER] = sib->keys[i];
+    if (!child->leaf) {
+        for (int i = 0; i <= sib->num_keys; ++i)
+            child->children[i+BTREE_ORDER] = sib->children[i];
+    }
+
+    // fecha gap no pai
+    for (int i = idx+1; i < x->num_keys; ++i)
+        x->keys[i-1]     = x->keys[i];
+    for (int i = idx+2; i <= x->num_keys; ++i)
+        x->children[i-1] = x->children[i];
+
+    child->num_keys += sib->num_keys + 1;
+    x->num_keys--;
+
+    free(sib);
+}
+
 
 void btree_traverse_node(BTreeNode* node) {
     int i;
