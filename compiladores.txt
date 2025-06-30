@@ -1,0 +1,11 @@
+g++ -std=c++11 -Wall -Wextra filesystem.cpp main_fs.cpp -o fs
+./fs
+ls
+mkdir nome_do_diretorio
+rmdir nome_do_diretorio
+cd nome_do_diretorio 
+cd ..
+touch arquivo1.txt Este é o conteúdo do arquivo1
+touch arquivo1.txt Outro texto
+rm arquivo1.txt
+exit

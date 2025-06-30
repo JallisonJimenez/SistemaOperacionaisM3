@@ -2,6 +2,9 @@
 #include <assert.h>
 #include <stdbool.h>
 
+void btree_split_child(BTreeNode* parent, int i);
+void btree_insert_nonfull(BTreeNode* node, TreeNode* k);
+
 // Cria a estrutura BTree vazia
 BTree* btree_create() {
     BTree* tree = (BTree*)malloc(sizeof(BTree));
