@@ -7,13 +7,13 @@
 #include <sys/stat.h>
 #include "filesystem.h"
 
-// Helper: check if file exists
+
 bool file_exists(const std::string& name) {
     struct stat buffer;
     return (stat(name.c_str(), &buffer) == 0);
 }
 
-// Serialize the BTree recursively: write entries D|path or F|path|content
+
 void serialize_dir(Directory* dir, const std::string& path, std::ofstream& out) {
     BTree* tree = dir->tree;
     std::function<void(BTreeNode*, const std::string&)> recurse;
@@ -42,7 +42,7 @@ int main() {
     Directory* root;
     const std::string persistFile = "fs.img";
 
-    // Load existing state if any
+    
     if (file_exists(persistFile)) {
         root = get_root_directory();
         std::ifstream in(persistFile);
